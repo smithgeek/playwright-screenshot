@@ -41,7 +41,10 @@ namespace playwright_screenshot.Controllers
 					Url = url,
 					Width = width
 				});
-				return File(screenshot.Bytes, screenshot.ContentType);
+				if (screenshot != null)
+				{
+					return File(screenshot.Bytes, screenshot.ContentType);
+				}
 			}
 			catch (Exception e)
 			{
@@ -54,51 +57,65 @@ namespace playwright_screenshot.Controllers
 		public async Task<IActionResult> Post([FromBody] ScreenshotOptions options, [FromQuery] Uri presignedUrl)
 		{
 			var screenshot = await TakeScreenshot(options);
-			using var stream = new MemoryStream(screenshot.Bytes);
-			if (await Upload(stream, presignedUrl))
+			if (screenshot != null)
 			{
-				return Ok();
+				using var stream = new MemoryStream(screenshot.Bytes);
+				if (await Upload(stream, presignedUrl))
+				{
+					return Ok();
+				}
 			}
 			return Problem("Unable to upload image.");
 		}
 
-		private async Task<Screenshot> TakeScreenshot(ScreenshotOptions options)
+		private async Task<Screenshot?> TakeScreenshot(ScreenshotOptions options)
 		{
 			var page = await browser.NewPageAsync();
 			await page.SetViewportSizeAsync(options.Width, options.Height);
-			await page.GotoAsync(options.Url);
-			var screenshotType = options.Format == "png" ? ScreenshotType.Png : ScreenshotType.Jpeg;
-			var contentType = options.Format == "png" ? "image/png" : "image/jpeg";
-			byte[] bytes;
-			if (!string.IsNullOrWhiteSpace(options.Locator))
+			var response = await page.GotoAsync(options.Url);
+			if (response != null)
 			{
-				bytes = await page.Locator(options.Locator).ScreenshotAsync(new LocatorScreenshotOptions
+				await response.FinishedAsync();
+				var screenshotType = options.Format == "png" ? ScreenshotType.Png : ScreenshotType.Jpeg;
+				var contentType = options.Format == "png" ? "image/png" : "image/jpeg";
+				byte[] bytes;
+				if (!string.IsNullOrWhiteSpace(options.Locator))
 				{
-					Type = screenshotType,
-					Quality = screenshotType == ScreenshotType.Jpeg ? options.Quality : null
-				});
-			}
-			else
-			{
-				bytes = await page.ScreenshotAsync(new PageScreenshotOptions
+					bytes = await page.Locator(options.Locator).ScreenshotAsync(new LocatorScreenshotOptions
+					{
+						Type = screenshotType,
+						Quality = screenshotType == ScreenshotType.Jpeg ? options.Quality : null
+					});
+				}
+				else
 				{
-					FullPage = options.FullPage,
-					Type = screenshotType,
-					Quality = screenshotType == ScreenshotType.Jpeg ? options.Quality : null
-				});
+					bytes = await page.ScreenshotAsync(new PageScreenshotOptions
+					{
+						FullPage = options.FullPage,
+						Type = screenshotType,
+						Quality = screenshotType == ScreenshotType.Jpeg ? options.Quality : null
+					});
+				}
+				return new Screenshot
+				{
+					Bytes = bytes,
+					ContentType = contentType
+				};
 			}
-			return new Screenshot
-			{
-				Bytes = bytes,
-				ContentType = contentType
-			};
+			return null;
 		}
 
 		private async Task<bool> Upload(Stream stream, Uri presignedUri)
 		{
 			var client = httpClientFactory.CreateClient();
 			var response = await client.PutAsync(presignedUri, new StreamContent(stream));
-			return response.IsSuccessStatusCode;
+			if (response.IsSuccessStatusCode)
+			{
+				return true;
+			}
+			var content = await response.Content.ReadAsStringAsync();
+			logger.LogError(content);
+			return false;
 		}
 
 		private class Screenshot
