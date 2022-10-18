@@ -76,6 +76,7 @@ namespace playwright_screenshot.Controllers
 			if (response != null)
 			{
 				await response.FinishedAsync();
+				await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 				var screenshotType = options.Format == "png" ? ScreenshotType.Png : ScreenshotType.Jpeg;
 				var contentType = options.Format == "png" ? "image/png" : "image/jpeg";
 				byte[] bytes;
