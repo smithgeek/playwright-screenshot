@@ -75,6 +75,10 @@ namespace playwright_screenshot.Controllers
 			var response = await page.GotoAsync(options.Url);
 			if (response != null)
 			{
+				if (!string.IsNullOrWhiteSpace(options.Locator))
+				{
+					await page.Locator(options.Locator).WaitForAsync();
+				}
 				await response.FinishedAsync();
 				await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 				var screenshotType = options.Format == "png" ? ScreenshotType.Png : ScreenshotType.Jpeg;
