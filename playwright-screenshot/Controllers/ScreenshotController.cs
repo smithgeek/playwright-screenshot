@@ -70,9 +70,12 @@ namespace playwright_screenshot.Controllers
 
 		private async Task<Screenshot?> TakeScreenshot(ScreenshotOptions options)
 		{
-			var page = await browser.NewPageAsync();
+			await using var context = await browser.NewContextAsync();
+			var page = await context.NewPageAsync();
 			await page.SetViewportSizeAsync(options.Width, options.Height);
+			page.SetDefaultTimeout(10000);
 			var response = await page.GotoAsync(options.Url);
+			Screenshot? screenshot = null;
 			if (response != null)
 			{
 				if (!string.IsNullOrWhiteSpace(options.Locator))
@@ -101,13 +104,14 @@ namespace playwright_screenshot.Controllers
 						Quality = screenshotType == ScreenshotType.Jpeg ? options.Quality : null
 					});
 				}
-				return new Screenshot
+				screenshot = new Screenshot
 				{
 					Bytes = bytes,
 					ContentType = contentType
 				};
 			}
-			return null;
+			await context.CloseAsync();
+			return screenshot;
 		}
 
 		private async Task<bool> Upload(Stream stream, Uri presignedUri)
