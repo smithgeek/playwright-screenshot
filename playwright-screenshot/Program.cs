@@ -13,6 +13,8 @@ var browser = await playwright.Chromium.LaunchAsync();
 builder.Services.AddSingleton(playwright);
 builder.Services.AddSingleton(browser);
 builder.Services.AddHttpClient();
+builder.Services.AddHealthChecks()
+	.AddCheck<UpHealthCheck>("Up");
 
 var app = builder.Build();
 
