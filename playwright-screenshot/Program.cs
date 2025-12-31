@@ -1,4 +1,5 @@
 using Microsoft.Playwright;
+using playwright_screenshot;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,7 +10,15 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 var playwright = await Playwright.CreateAsync();
-var browser = await playwright.Chromium.LaunchAsync();
+var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+{
+	Headless = true,
+	Args = [
+		"--no-sandbox",
+		"--disable-setuid-sandbox",
+		"--disable-dev-shm-usage" // Prevents crashes in Docker /dev/shm
+    ]
+});
 builder.Services.AddSingleton(playwright);
 builder.Services.AddSingleton(browser);
 builder.Services.AddHttpClient();

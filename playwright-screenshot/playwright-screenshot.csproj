@@ -1,18 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>playwright_screenshot</RootNamespace>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+	  <CopyPlaywrightSentinelToOutputDirectory>true</CopyPlaywrightSentinelToOutputDirectory>
   </PropertyGroup>
 
   <ItemGroup>
-	<PackageReference Include="AWSSDK.S3" Version="3.7.9.69" />
-	<PackageReference Include="Microsoft.Playwright" Version="1.27.1" />
+	<PackageReference Include="AWSSDK.S3" Version="4.0.1.7" />
+	<PackageReference Include="Microsoft.Playwright" Version="1.57.0" />
 	<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.15.1" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.2.3" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.0" />
   </ItemGroup>
 
 	<PropertyGroup>
