@@ -7,37 +7,99 @@ namespace playwright_screenshot.Controllers;
 public class ScreenshotS3Controller(IBrowser browser) : Controller
 {
 	[Route("/screenshot/s3")]
-	public async Task<PageScreenshotResponse> Post([FromBody] ScreenshotS3Body args)
+	[HttpPost]
+	public async Task<IResult> Post([FromBody] ScreenshotS3Body args)
 	{
+		if (args.Url == null)
+		{
+			return TypedResults.BadRequest();
+		}
 		await using var context = await browser.NewContextAsync();
+		if (args.Cookies.Count > 0)
+		{
+			await context.AddCookiesAsync(args.Cookies.Select(c => new Cookie
+			{
+				Domain = c.Domain,
+				Path = c.Path,
+				Value = c.Value,
+				HttpOnly = c.HttpOnly,
+				Name = c.Name,
+				Secure = c.Secure,
+				Url = c.Url,
+				Expires = c.Expires,
+			}));
+		}
 		var page = await context.NewPageAsync();
+		PageScreenshotResponse response = new();
+		page.Console += (_, msg) =>
+		{
+			Console.WriteLine($"[CONSOLE {msg.Type.ToUpper()}] {msg.Text}");
+			response.Console.Add($"[{msg.Type.ToUpper()}] {msg.Text}");
+		};
+
+		page.RequestFailed += (_, request) =>
+		{
+			Console.WriteLine($"[NETWORK ERROR] {request.Method} {request.Url} - {request.Failure}");
+			response.NetworkErrors.Add($"{request.Method} {request.Url} - {request.Failure}");
+		};
+
 		var onComplete = new TaskCompletionSource<PageScreenshotResponse>();
-		await page.ExposeFunctionAsync<PageScreenshotResponse>("onUploadComplete", onComplete.SetResult);
+		await page.ExposeFunctionAsync<PageScreenshotResponse>("onUploadComplete", pageResponse =>
+		{
+			response.Success = pageResponse.Success;
+			response.Response = pageResponse.Response;
+			onComplete.SetResult(response);
+		});
+		await page.ExposeFunctionAsync<string>("specialLog", (msg) =>
+		{
+			Console.WriteLine($"[FROM PAGE] {msg}");
+			response.Log.Add(msg);
+		});
 
 		await page.GotoAsync(args.Url);
 		await Task.WhenAny(onComplete.Task, Task.Delay(TimeSpan.FromSeconds(args.Timeout)));
 		if (onComplete.Task.IsCompleted)
 		{
-			return onComplete.Task.Result;
+			return TypedResults.Ok(onComplete.Task.Result);
 		}
-		return new() { Success = false, Response = "timeout" };
+		response.Success = false;
+		response.Response = "timeout";
+		return TypedResults.Ok(response);
 	}
 }
 
 public class ScreenshotS3Body
 {
 	[JsonPropertyName("url")]
-	public required string Url { get; init; }
-	[JsonPropertyName("presignedUrl")]
-	public required string PresignedUrl { get; init; }
+	public string? Url { get; set; }
 	[JsonPropertyName("timeoutSeconds")]
-	public int Timeout { get; init; } = 60;
+	public int Timeout { get; set; } = 60;
+	[JsonPropertyName("cookies")]
+	public List<CookieDto> Cookies { get; set; } = [];
 }
 
 public class PageScreenshotResponse
 {
 	[JsonPropertyName("success")]
-	public bool Success { get; init; }
+	public bool Success { get; set; }
 	[JsonPropertyName("response")]
-	public object? Response { get; init; }
+	public object? Response { get; set; }
+	[JsonPropertyName("console")]
+	public List<string> Console { get; init; } = [];
+	[JsonPropertyName("networkErrors")]
+	public List<string> NetworkErrors { get; init; } = [];
+	[JsonPropertyName("log")]
+	public List<string> Log { get; init; } = [];
+}
+
+public class CookieDto
+{
+	public required string Name { get; set; }
+	public required string Value { get; set; }
+	public string? Domain { get; set; }
+	public string? Path { get; set; }
+	public bool Secure { get; set; }
+	public bool HttpOnly { get; set; }
+	public string? Url { get; set; }
+	public float? Expires { get; set; }
 }
