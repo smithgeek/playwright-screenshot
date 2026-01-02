@@ -1,46 +1,61 @@
-name: Docker Image CI
+name: Release
 
 on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:
+    push:
+        tags:
+            - versions/*
+    workflow_dispatch:
+        inputs:
+            deploy_tag:
+                description: The tag to deploy (e.g., 1.5.2)
+                required: true
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: smithgeek/playwright-screenshot
-  
+    REGISTRY: ghcr.io
 jobs:
+    # 1. PARALLEL BUILD JOB
+    build:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
 
-  build:
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
 
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-      pull-requests: read
+            - name: set lower case owner name
+              run: |
+                  echo "IMAGE_NAME_PREFIX=ghcr.io/${OWNER,,}/playwright-screenshot" >> ${GITHUB_ENV}
+              env:
+                  OWNER: "${{ github.repository_owner }}"
 
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Log in to the Container registry
-      uses: docker/login-action@f054a8b539a109f9f41c372932f1ae047eff08c9
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-          
-    - name: Docker Api - Extract metadata (tags, labels)
-      id: meta
-      uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
-      with:
-        tags: type=edge,enable=true,priority=700,prefix=,suffix=,branch=$repo.default_branch
-        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          
-    - name: Build the Docker image
-      uses: docker/build-push-action@ad44023a93711e3deb337508980b4b5e9bcdc5dc
-      with:
-        file: ./playwright-screenshot/Dockerfile
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
+            - name: Normalize tag
+              run: |
+                  RAW_TAG="${{ github.event.inputs.deploy_tag || github.ref_name }}"
+                  SAFE_TAG="${RAW_TAG#*/}"
+                  SAFE_TAG="${SAFE_TAG//\//-}"
+                  echo "IMAGE_TAG=$SAFE_TAG" >> $GITHUB_ENV
 
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Log in to GHCR
+              uses: docker/login-action@v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build and Push to GHCR
+              uses: docker/build-push-action@v5
+              with:
+                  context: .
+                  file: Dockerfile
+                  push: true
+                  tags: |
+                      ${{ env.IMAGE_NAME_PREFIX }}:${{ env.IMAGE_TAG }}
+                      ${{ env.IMAGE_NAME_PREFIX }}:latest
+                  # Enables layer caching to make subsequent builds faster
+                  #cache-from: type=gha
+                  #cache-to: type=gha,mode=min
