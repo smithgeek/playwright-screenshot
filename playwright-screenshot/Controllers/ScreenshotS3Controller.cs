@@ -44,7 +44,7 @@ public class ScreenshotS3Controller(IBrowser browser) : Controller
 		};
 
 		var onComplete = new TaskCompletionSource<PageScreenshotResponse>();
-		await page.ExposeFunctionAsync<PageScreenshotResponse>("onUploadComplete", pageResponse =>
+		await page.ExposeFunctionAsync<object>("onUploadComplete", pageResponse =>
 		{
 			response.Response = pageResponse;
 			onComplete.SetResult(response);

@@ -16,7 +16,6 @@ FROM mcr.microsoft.com/playwright/dotnet:v1.57.0-noble AS final
 WORKDIR /app
 
 # Install the .NET 10 Runtime into this Playwright image
-# This is the "missing link" that solves your version error
 COPY --from=mcr.microsoft.com/dotnet/aspnet:10.0 /usr/share/dotnet /usr/share/dotnet
 
 # Ensure the system knows where the dotnet executable is
