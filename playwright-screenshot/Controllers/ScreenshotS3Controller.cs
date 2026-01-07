@@ -46,8 +46,7 @@ public class ScreenshotS3Controller(IBrowser browser) : Controller
 		var onComplete = new TaskCompletionSource<PageScreenshotResponse>();
 		await page.ExposeFunctionAsync<PageScreenshotResponse>("onUploadComplete", pageResponse =>
 		{
-			response.Success = pageResponse.Success;
-			response.Response = pageResponse.Response;
+			response.Response = pageResponse;
 			onComplete.SetResult(response);
 		});
 		await page.ExposeFunctionAsync<string>("specialLog", (msg) =>
@@ -62,8 +61,11 @@ public class ScreenshotS3Controller(IBrowser browser) : Controller
 		{
 			return TypedResults.Ok(onComplete.Task.Result);
 		}
-		response.Success = false;
-		response.Response = "timeout";
+		response.Response = new
+		{
+			Success = false,
+			Message = "timeout"
+		};
 		return TypedResults.Ok(response);
 	}
 }
@@ -80,8 +82,6 @@ public class ScreenshotS3Body
 
 public class PageScreenshotResponse
 {
-	[JsonPropertyName("success")]
-	public bool Success { get; set; }
 	[JsonPropertyName("response")]
 	public object? Response { get; set; }
 	[JsonPropertyName("console")]
