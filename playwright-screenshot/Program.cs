@@ -12,14 +12,19 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 using var playwright = await Playwright.CreateAsync();
+List<string> launchArgs = [
+	//"--enable-unsafe-swiftshader",
+	//"--use-gl=angle",
+	//"--use-angle=swiftshader",
+	"--headless=new",
+	"--no-sandbox",
+	"--disable-setuid-sandbox",
+	"--disable-dev-shm-usage", // Prevents crashes in Docker /dev/shm
+];
 await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
 {
 	Headless = true,
-	Args = [
-		"--no-sandbox",
-		"--disable-setuid-sandbox",
-		"--disable-dev-shm-usage" // Prevents crashes in Docker /dev/shm
-    ]
+	Args = launchArgs
 });
 builder.Services.AddSingleton(playwright);
 builder.Services.AddSingleton(browser);

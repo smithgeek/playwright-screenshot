@@ -6,6 +6,11 @@ namespace playwright_screenshot.Controllers;
 
 public class ScreenshotS3Controller(IBrowser browser) : Controller
 {
+	private static readonly Lazy<string> cryptoPolyfill = new(() =>
+	{
+		return System.IO.File.ReadAllText("/app/webcrypto-liner.shim.min.js");
+	});
+
 	[Route("/screenshot/s3")]
 	[HttpPost]
 	public async Task<IResult> Post([FromBody] ScreenshotS3Body args)
@@ -29,6 +34,14 @@ public class ScreenshotS3Controller(IBrowser browser) : Controller
 				Expires = c.Expires,
 			}));
 		}
+		if (args.Options.UseCryptoPolyfill)
+		{
+			Console.WriteLine("Using crypto polyfill");
+			await context.AddInitScriptAsync(cryptoPolyfill.Value);
+			await context.AddInitScriptAsync(@"() => {
+				console.log('Polyfill active. Crypto status:', !!window.crypto.subtle);
+			}");
+		}
 		var page = await context.NewPageAsync();
 		PageScreenshotResponse response = new();
 		page.Console += (_, msg) =>
@@ -36,6 +49,29 @@ public class ScreenshotS3Controller(IBrowser browser) : Controller
 			Console.WriteLine($"[CONSOLE {msg.Type.ToUpper()}] {msg.Text}");
 			response.Console.Add($"[{msg.Type.ToUpper()}] {msg.Text}");
 		};
+
+		if (args.Logging.LogAllRequests)
+		{
+			page.Request += (_, request) =>
+			{
+				Console.WriteLine($">> {request.Method} {request.Url}");
+			};
+
+			page.Response += (_, response) =>
+			{
+				if (response.Status >= 400)
+				{
+					response.TextAsync().ContinueWith(body =>
+					{
+						Console.WriteLine($"<< {response.Status} {response.Url}: {body}");
+					});
+				}
+				else
+				{
+					Console.WriteLine($"<< {response.Status} {response.Url}");
+				}
+			};
+		}
 
 		page.RequestFailed += (_, request) =>
 		{
@@ -55,7 +91,7 @@ public class ScreenshotS3Controller(IBrowser browser) : Controller
 			response.Log.Add(msg);
 		});
 
-		await page.GotoAsync(args.Url);
+		await page.GotoAsync(args.Url, new() { WaitUntil = WaitUntilState.NetworkIdle });
 		await Task.WhenAny(onComplete.Task, Task.Delay(TimeSpan.FromSeconds(args.Timeout)));
 		if (onComplete.Task.IsCompleted)
 		{
@@ -78,6 +114,18 @@ public class ScreenshotS3Body
 	public int Timeout { get; set; } = 60;
 	[JsonPropertyName("cookies")]
 	public List<CookieDto> Cookies { get; set; } = [];
+	[JsonPropertyName("logging")]
+	public LoggingOptions Logging { get; set; } = new();
+	public PlaywrightOptions Options { get; set; } = new();
+
+	public class LoggingOptions
+	{
+		public bool LogAllRequests { get; set; } = false;
+	}
+	public class PlaywrightOptions
+	{
+		public bool UseCryptoPolyfill { get; set; } = false;
+	}
 }
 
 public class PageScreenshotResponse

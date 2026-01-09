@@ -32,6 +32,7 @@ HEALTHCHECK CMD ["/healthchecks/Distroless.HealthChecks", "--uri", "http://local
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 COPY --from=build /app/publish .
+COPY --from=build /src/webcrypto-liner.shim.min.js .
 
 
 ENTRYPOINT ["dotnet", "playwright-screenshot.dll"]
