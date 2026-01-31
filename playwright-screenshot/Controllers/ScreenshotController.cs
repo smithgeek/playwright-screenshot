@@ -1,147 +1,193 @@
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.Playwright;
+using System.Text.Json.Serialization;
 
-namespace playwright_screenshot.Controllers
+namespace playwright_screenshot.Controllers;
+
+public class ScreenshotController(BrowserFactory browserFactory) : Controller
 {
-	[ApiController]
-	[Route("[controller]")]
-	public class ScreenshotController : ControllerBase
+	private static int GetMaxParallelRenders()
 	{
-		private readonly IBrowser browser;
-		private readonly IHttpClientFactory httpClientFactory;
-		private readonly ILogger<ScreenshotController> logger;
-
-		public ScreenshotController(ILogger<ScreenshotController> logger, IBrowser browser,
-			IHttpClientFactory httpClientFactory)
+		if (int.TryParse(Environment.GetEnvironmentVariable("MAX_PARALLEL_RENDERS"), out var max))
 		{
-			this.logger = logger;
-			this.browser = browser;
-			this.httpClientFactory = httpClientFactory;
+			return max;
 		}
+		return 3;
+	}
 
-		[HttpGet]
-		public async Task<IActionResult> Get(
-			[FromQuery] string url,
-			[FromQuery(Name = "h")] int height = 720,
-			[FromQuery(Name = "w")] int width = 1280,
-			[FromQuery(Name = "fp")] bool fullPage = false,
-			[FromQuery(Name = "l")] string? locator = null,
-			[FromQuery(Name = "f")] string? format = null,
-			[FromQuery(Name = "q")] int quality = 100)
+	private static readonly SemaphoreSlim renderSemaphore = new(GetMaxParallelRenders());
+
+	private static readonly Lazy<string> cryptoPolyfill = new(() =>
+	{
+		return System.IO.File.ReadAllText("/app/webcrypto-liner.shim.min.js");
+	});
+
+	[Route("/screenshot/s3")]
+	[HttpPost]
+	public async Task<IResult> Post([FromBody] ScreenshotS3Body args)
+	{
+		if (args.Url == null)
 		{
-			try
-			{
-				var screenshot = await TakeScreenshot(new ScreenshotOptions
-				{
-					Format = format,
-					FullPage = fullPage,
-					Height = height,
-					Locator = locator,
-					Quality = quality,
-					Url = url,
-					Width = width
-				});
-				if (screenshot != null)
-				{
-					return File(screenshot.Bytes, screenshot.ContentType);
-				}
-			}
-			catch (Exception e)
-			{
-				logger.LogError(e, "Error generating screenshot");
-			}
-			throw new Exception("Unable to generate screenshot");
+			return TypedResults.BadRequest();
 		}
-
-		[HttpPost]
-		public async Task<IActionResult> Post([FromBody] ScreenshotOptions options, [FromQuery] Uri presignedUrl)
+		await renderSemaphore.WaitAsync();
+		try
 		{
-			var screenshot = await TakeScreenshot(options);
-			if (screenshot != null)
-			{
-				using var stream = new MemoryStream(screenshot.Bytes);
-				if (await Upload(stream, presignedUrl))
-				{
-					return Ok();
-				}
-			}
-			return Problem("Unable to upload image.");
+			return await Render(args);
 		}
-
-		private async Task<Screenshot?> TakeScreenshot(ScreenshotOptions options)
+		finally
 		{
-			await using var context = await browser.NewContextAsync();
-			var page = await context.NewPageAsync();
-			await page.SetViewportSizeAsync(options.Width, options.Height);
-			page.SetDefaultTimeout(10000);
-			var response = await page.GotoAsync(options.Url);
-			Screenshot? screenshot = null;
-			if (response != null)
+			renderSemaphore.Release();
+		}
+	}
+
+	private async Task<IResult> Render(ScreenshotS3Body args)
+	{
+		await using var contextHolder = await browserFactory.GetContextAsync();
+		var context = contextHolder.Context;
+		if (args.Cookies.Count > 0)
+		{
+			await context.AddCookiesAsync(args.Cookies.Select(c => new Cookie
 			{
-				if (!string.IsNullOrWhiteSpace(options.Locator))
+				Domain = c.Domain,
+				Path = c.Path,
+				Value = c.Value,
+				HttpOnly = c.HttpOnly,
+				Name = c.Name,
+				Secure = c.Secure,
+				Url = c.Url,
+				Expires = c.Expires,
+			}));
+		}
+		if (args.Options.UseCryptoPolyfill)
+		{
+			Console.WriteLine("Using crypto polyfill");
+			await context.AddInitScriptAsync(cryptoPolyfill.Value);
+			await context.AddInitScriptAsync(@"() => {
+				console.log('Polyfill active. Crypto status:', !!window.crypto.subtle);
+			}");
+		}
+		var page = await context.NewPageAsync();
+		try
+		{
+
+			PageScreenshotResponse response = new();
+			page.Console += (_, msg) =>
+			{
+				Console.WriteLine($"[CONSOLE {msg.Type.ToUpper()}] {msg.Text}");
+				response.Console.Add($"[{msg.Type.ToUpper()}] {msg.Text}");
+			};
+
+			if (args.Logging.LogAllRequests)
+			{
+				page.Request += (_, request) =>
 				{
-					await page.Locator(options.Locator).WaitForAsync();
-				}
-				await response.FinishedAsync();
-				await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-				var screenshotType = options.Format == "png" ? ScreenshotType.Png : ScreenshotType.Jpeg;
-				var contentType = options.Format == "png" ? "image/png" : "image/jpeg";
-				byte[] bytes;
-				if (!string.IsNullOrWhiteSpace(options.Locator))
+					Console.WriteLine($">> {request.Method} {request.Url}");
+				};
+
+				page.Response += (_, response) =>
 				{
-					bytes = await page.Locator(options.Locator).ScreenshotAsync(new LocatorScreenshotOptions
+					if (response.Status >= 400)
 					{
-						Type = screenshotType,
-						Quality = screenshotType == ScreenshotType.Jpeg ? options.Quality : null
-					});
-				}
-				else
-				{
-					bytes = await page.ScreenshotAsync(new PageScreenshotOptions
+						response.TextAsync().ContinueWith(body =>
+						{
+							Console.WriteLine($"<< {response.Status} {response.Url}: {body}");
+						});
+					}
+					else
 					{
-						FullPage = options.FullPage,
-						Type = screenshotType,
-						Quality = screenshotType == ScreenshotType.Jpeg ? options.Quality : null
-					});
-				}
-				screenshot = new Screenshot
-				{
-					Bytes = bytes,
-					ContentType = contentType
+						Console.WriteLine($"<< {response.Status} {response.Url}");
+					}
 				};
 			}
-			await context.CloseAsync();
-			return screenshot;
-		}
 
-		private async Task<bool> Upload(Stream stream, Uri presignedUri)
-		{
-			var client = httpClientFactory.CreateClient();
-			var response = await client.PutAsync(presignedUri, new StreamContent(stream));
-			if (response.IsSuccessStatusCode)
+			page.RequestFailed += (_, request) =>
 			{
-				return true;
+				Console.WriteLine($"[NETWORK ERROR] {request.Method} {request.Url} - {request.Failure}");
+				response.NetworkErrors.Add($"{request.Method} {request.Url} - {request.Failure}");
+			};
+
+			var onComplete = new TaskCompletionSource<PageScreenshotResponse>();
+			await page.ExposeFunctionAsync<object>("onUploadComplete", pageResponse =>
+			{
+				response.Response = pageResponse;
+				onComplete.SetResult(response);
+			});
+			await page.ExposeFunctionAsync<string>("specialLog", (msg) =>
+			{
+				Console.WriteLine($"[FROM PAGE] {msg}");
+				response.Log.Add(msg);
+			});
+
+			await page.GotoAsync(args.Url!, new() { WaitUntil = WaitUntilState.NetworkIdle });
+			await page.EvaluateAsync("() => document.fonts.ready");
+			await Task.WhenAny(onComplete.Task, Task.Delay(TimeSpan.FromSeconds(args.Timeout)));
+			if (onComplete.Task.IsCompleted)
+			{
+				return TypedResults.Ok(onComplete.Task.Result);
 			}
-			var content = await response.Content.ReadAsStringAsync();
-			logger.LogError(content);
-			return false;
+			response.Response = new
+			{
+				Success = false,
+				Message = "timeout"
+			};
+			return TypedResults.Ok(response);
 		}
-
-		private class Screenshot
+		catch (Exception e)
 		{
-			public byte[] Bytes { get; set; } = Array.Empty<byte>();
-			public string ContentType { get; set; } = "image/png";
+			Console.WriteLine(e.Message);
+			TypedResults.InternalServerError(e);
 		}
+		finally
+		{
+			await page.CloseAsync();
+		}
+		return TypedResults.InternalServerError("Error generating screenshot");
 	}
+}
 
-	public class ScreenshotOptions
+public class ScreenshotS3Body
+{
+	[JsonPropertyName("url")]
+	public string? Url { get; set; }
+	[JsonPropertyName("timeoutSeconds")]
+	public int Timeout { get; set; } = 60;
+	[JsonPropertyName("cookies")]
+	public List<CookieDto> Cookies { get; set; } = [];
+	[JsonPropertyName("logging")]
+	public LoggingOptions Logging { get; set; } = new();
+	public PlaywrightOptions Options { get; set; } = new();
+
+	public class LoggingOptions
 	{
-		public string? Format { get; set; }
-		public bool FullPage { get; set; }
-		public int Height { get; set; }
-		public string? Locator { get; set; }
-		public int Quality { get; set; }
-		public string Url { get; set; } = string.Empty;
-		public int Width { get; set; }
+		public bool LogAllRequests { get; set; } = false;
 	}
+	public class PlaywrightOptions
+	{
+		public bool UseCryptoPolyfill { get; set; } = false;
+	}
+}
+
+public class PageScreenshotResponse
+{
+	[JsonPropertyName("response")]
+	public object? Response { get; set; }
+	[JsonPropertyName("console")]
+	public List<string> Console { get; init; } = [];
+	[JsonPropertyName("networkErrors")]
+	public List<string> NetworkErrors { get; init; } = [];
+	[JsonPropertyName("log")]
+	public List<string> Log { get; init; } = [];
+}
+
+public class CookieDto
+{
+	public required string Name { get; set; }
+	public required string Value { get; set; }
+	public string? Domain { get; set; }
+	public string? Path { get; set; }
+	public bool Secure { get; set; }
+	public bool HttpOnly { get; set; }
+	public string? Url { get; set; }
+	public float? Expires { get; set; }
 }

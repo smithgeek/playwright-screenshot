@@ -1,4 +1,3 @@
-using Microsoft.Playwright;
 using playwright_screenshot;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -11,23 +10,8 @@ builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-using var playwright = await Playwright.CreateAsync();
-List<string> launchArgs = [
-	//"--enable-unsafe-swiftshader",
-	//"--use-gl=angle",
-	//"--use-angle=swiftshader",
-	"--headless=new",
-	"--no-sandbox",
-	"--disable-setuid-sandbox",
-	"--disable-dev-shm-usage", // Prevents crashes in Docker /dev/shm
-];
-await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
-{
-	Headless = true,
-	Args = launchArgs
-});
-builder.Services.AddSingleton(playwright);
-builder.Services.AddSingleton(browser);
+builder.Services.AddSingleton<BrowserFactory>();
+
 builder.Services.AddHttpClient();
 builder.Services.AddHealthChecks()
 	.AddCheck<UpHealthCheck>("Up");
