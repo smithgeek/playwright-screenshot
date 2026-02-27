@@ -119,8 +119,7 @@ public class ScreenshotController(BrowserFactory browserFactory) : Controller
 				response.Log.Add(msg);
 			});
 
-			await page.GotoAsync(args.Url!, new() { WaitUntil = WaitUntilState.NetworkIdle });
-			await page.EvaluateAsync("() => document.fonts.ready");
+			await page.GotoAsync(args.Url!);
 			await Task.WhenAny(onComplete.Task, Task.Delay(TimeSpan.FromSeconds(args.Timeout)));
 			if (onComplete.Task.IsCompleted)
 			{
