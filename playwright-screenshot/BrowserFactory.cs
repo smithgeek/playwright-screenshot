@@ -37,8 +37,10 @@ public sealed class BrowserHolder(IPlaywright playwright, IBrowser browser)
 			[
 				"--headless=new",
 				"--no-sandbox",
+				"--disable-gpu",
+				"--disable-software-rasterizer",
 				"--disable-setuid-sandbox",
-				"--disable-dev-shm-usage", // Prevents crashes in Docker /dev/shm
+				"--disable-dev-shm-usage",
 				"--disable-background-networking",
 				"--disable-background-timer-throttling",
 				"--disable-backgrounding-occluded-windows",
